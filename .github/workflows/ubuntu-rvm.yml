@@ -21,11 +21,6 @@ jobs:
     steps:
       - uses: actions/checkout@master
       - run: git submodule update -i
-      - name: Fixed world writable dirs
-        run: |
-          chmod go-w $HOME
-          sudo chmod -R go-w /usr/share
-          sudo chmod -R go-w /opt
       - name: Set up RVM
         run: |
           curl -sSL https://get.rvm.io | bash
@@ -34,6 +29,10 @@ jobs:
           source $HOME/.rvm/scripts/rvm
           rvm install ${{ matrix.ruby }} --binary
           rvm --default use ${{ matrix.ruby }}
+      - name: ruby -v
+        run:
+          source $HOME/.rvm/scripts/rvm
+          ruby -v
       - name: Install dependencies
         run: |
           source $HOME/.rvm/scripts/rvm
