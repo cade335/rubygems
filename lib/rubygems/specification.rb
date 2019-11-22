@@ -14,7 +14,6 @@ require 'rubygems/basic_specification'
 require 'rubygems/stub_specification'
 require 'rubygems/specification_policy'
 require 'rubygems/util/list'
-require 'stringio'
 
 ##
 # The Specification class contains the information for a gem.  Typically
@@ -110,6 +109,7 @@ class Gem::Specification < Gem::BasicSpecification
   # rubocop:disable Style/MutableConstant
   LOAD_CACHE = {} # :nodoc:
   # rubocop:enable Style/MutableConstant
+  LOAD_CACHE_MUTEX = Mutex.new
 
   private_constant :LOAD_CACHE if defined? private_constant
 
@@ -190,8 +190,8 @@ class Gem::Specification < Gem::BasicSpecification
 
   # Sentinel object to represent "not found" stubs
   NOT_FOUND = Struct.new(:to_spec, :this).new # :nodoc:
-  @@spec_with_requirable_file          = {}
-  @@active_stub_with_requirable_file   = {}
+  @@spec_with_requirable_file = {}
+  @@active_stub_with_requirable_file = {}
 
   ######################################################################
   # :section: Required gemspec attributes
@@ -732,6 +732,7 @@ class Gem::Specification < Gem::BasicSpecification
   # Formerly used to set rubyforge project.
 
   attr_writer :rubyforge_project
+  deprecate :rubyforge_project=, :none,       2019, 12
 
   ##
   # The Gem::Specification version of this gemspec.
@@ -754,13 +755,15 @@ class Gem::Specification < Gem::BasicSpecification
   end
 
   def self._clear_load_cache # :nodoc:
-    LOAD_CACHE.clear
+    LOAD_CACHE_MUTEX.synchronize do
+      LOAD_CACHE.clear
+    end
   end
 
   def self.each_gemspec(dirs) # :nodoc:
     dirs.each do |dir|
       Gem::Util.glob_files_in_dir("*.gemspec", dir).each do |path|
-        yield path.untaint
+        yield path.tap(&Gem::UNTAINT)
       end
     end
   end
@@ -824,7 +827,7 @@ class Gem::Specification < Gem::BasicSpecification
   def self.default_stubs(pattern = "*.gemspec")
     base_dir = Gem.default_dir
     gems_dir = File.join base_dir, "gems"
-    gemspec_stubs_in(default_specifications_dir, pattern) do |path|
+    gemspec_stubs_in(Gem.default_specifications_dir, pattern) do |path|
       Gem::StubSpecification.default_gemspec_stub(path, base_dir, gems_dir)
     end
   end
@@ -863,7 +866,7 @@ class Gem::Specification < Gem::BasicSpecification
   # Loads the default specifications. It should be called only once.
 
   def self.load_defaults
-    each_spec([default_specifications_dir]) do |spec|
+    each_spec([Gem.default_specifications_dir]) do |spec|
       # #load returns nil if the spec is bad, so we just ignore
       # it at this stage
       Gem.register_default_spec(spec)
@@ -927,7 +930,7 @@ class Gem::Specification < Gem::BasicSpecification
 
   def self.dirs
     @@dirs ||= Gem.path.collect do |dir|
-      File.join dir.dup.untaint, "specifications"
+      File.join dir.dup.tap(&Gem::UNTAINT), "specifications"
     end
   end
 
@@ -1106,22 +1109,29 @@ class Gem::Specification < Gem::BasicSpecification
   def self.load(file)
     return unless file
 
-    _spec = LOAD_CACHE[file]
+    _spec = LOAD_CACHE_MUTEX.synchronize { LOAD_CACHE[file] }
     return _spec if _spec
 
-    file = file.dup.untaint
+    file = file.dup.tap(&Gem::UNTAINT)
     return unless File.file?(file)
 
     code = File.read file, :mode => 'r:UTF-8:-'
 
-    code.untaint
+    code.tap(&Gem::UNTAINT)
 
     begin
       _spec = eval code, binding, file
 
       if Gem::Specification === _spec
         _spec.loaded_from = File.expand_path file.to_s
-        LOAD_CACHE[file] = _spec
+        LOAD_CACHE_MUTEX.synchronize do
+          prev = LOAD_CACHE[file]
+          if prev
+            _spec = prev
+          else
+            LOAD_CACHE[file] = _spec
+          end
+        end
         return _spec
       end
 
@@ -1220,8 +1230,8 @@ class Gem::Specification < Gem::BasicSpecification
     @@all = nil
     @@stubs = nil
     @@stubs_by_name = {}
-    @@spec_with_requirable_file          = {}
-    @@active_stub_with_requirable_file   = {}
+    @@spec_with_requirable_file = {}
+    @@active_stub_with_requirable_file = {}
     _clear_load_cache
     unresolved = unresolved_deps
     unless unresolved.empty?
@@ -1520,7 +1530,7 @@ class Gem::Specification < Gem::BasicSpecification
   # a full path.
 
   def bin_dir
-    @bin_dir ||= File.join gem_dir, bindir # TODO: this is unfortunate
+    @bin_dir ||= File.join gem_dir, bindir
   end
 
   ##
@@ -1657,7 +1667,7 @@ class Gem::Specification < Gem::BasicSpecification
   # https://reproducible-builds.org/specs/source-date-epoch/
 
   def date
-    @date ||= ENV["SOURCE_DATE_EPOCH"] ? Time.utc(*Time.at(ENV["SOURCE_DATE_EPOCH"].to_i).utc.to_a[3..5].reverse) : TODAY
+    @date ||= Time.utc(*Gem.source_date_epoch.utc.to_a[3..5].reverse)
   end
 
   DateLike = Object.new # :nodoc:
@@ -1742,10 +1752,11 @@ class Gem::Specification < Gem::BasicSpecification
   #
   #   [depending_gem, dependency, [list_of_gems_that_satisfy_dependency]]
 
-  def dependent_gems
+  def dependent_gems(check_dev=true)
     out = []
     Gem::Specification.each do |spec|
-      spec.dependencies.each do |dep|
+      deps = check_dev ? spec.dependencies : spec.runtime_dependencies
+      deps.each do |dep|
         if self.satisfies_requirement?(dep)
           sats = []
           find_all_satisfiers(dep) do |sat|
@@ -2219,7 +2230,6 @@ class Gem::Specification < Gem::BasicSpecification
 
     e = Gem::LoadError.new msg
     e.name = self.name
-    # TODO: e.requirement = dep.requirement
 
     raise e
   end
@@ -2284,18 +2294,18 @@ class Gem::Specification < Gem::BasicSpecification
 
   def ruby_code(obj)
     case obj
-    when String            then obj.dump + ".freeze"
-    when Array             then '[' + obj.map { |x| ruby_code x }.join(", ") + ']'
-    when Hash              then
+    when String             then obj.dump + ".freeze"
+    when Array              then '[' + obj.map { |x| ruby_code x }.join(", ") + ']'
+    when Hash               then
       seg = obj.keys.sort.map { |k| "#{k.to_s.dump} => #{obj[k].to_s.dump}" }
       "{ #{seg.join(', ')} }"
-    when Gem::Version      then obj.to_s.dump
-    when DateLike          then obj.strftime('%Y-%m-%d').dump
-    when Time              then obj.strftime('%Y-%m-%d').dump
-    when Numeric           then obj.inspect
-    when true, false, nil  then obj.inspect
-    when Gem::Platform     then "Gem::Platform.new(#{obj.to_a.inspect})"
-    when Gem::Requirement  then
+    when Gem::Version       then obj.to_s.dump
+    when DateLike           then obj.strftime('%Y-%m-%d').dump
+    when Time               then obj.strftime('%Y-%m-%d').dump
+    when Numeric            then obj.inspect
+    when true, false, nil   then obj.inspect
+    when Gem::Platform      then "Gem::Platform.new(#{obj.to_a.inspect})"
+    when Gem::Requirement   then
       list = obj.as_list
       "Gem::Requirement.new(#{ruby_code(list.size == 1 ? obj.to_s : list)})"
     else raise Gem::Exception, "ruby_code case not handled: #{obj.class}"
@@ -2414,6 +2424,7 @@ class Gem::Specification < Gem::BasicSpecification
   # still have their default values are omitted.
 
   def to_ruby
+    require 'openssl'
     mark_version
     result = []
     result << "# -*- encoding: utf-8 -*-"
@@ -2452,9 +2463,8 @@ class Gem::Specification < Gem::BasicSpecification
     @@attributes.each do |attr_name|
       next if handled.include? attr_name
       current_value = self.send(attr_name)
-      if current_value != default_value(attr_name) or
-         self.class.required_attribute? attr_name
-        result << "  s.#{attr_name} = #{ruby_code current_value}"
+      if current_value != default_value(attr_name) || self.class.required_attribute?(attr_name)
+        result << "  s.#{attr_name} = #{ruby_code current_value}" unless current_value.is_a?(OpenSSL::PKey::RSA)
       end
     end
 
@@ -2467,24 +2477,16 @@ class Gem::Specification < Gem::BasicSpecification
       result << nil
       result << "  if s.respond_to? :specification_version then"
       result << "    s.specification_version = #{specification_version}"
+      result << "  end"
       result << nil
 
-      result << "    if Gem::Version.new(Gem::VERSION) >= Gem::Version.new('1.2.0') then"
+      result << "  if s.respond_to? :add_runtime_dependency then"
 
       dependencies.each do |dep|
         req = dep.requirements_list.inspect
         dep.instance_variable_set :@type, :runtime if dep.type.nil? # HACK
-        result << "      s.add_#{dep.type}_dependency(%q<#{dep.name}>.freeze, #{req})"
+        result << "    s.add_#{dep.type}_dependency(%q<#{dep.name}>.freeze, #{req})"
       end
-
-      result << "    else"
-
-      dependencies.each do |dep|
-        version_reqs_param = dep.requirements_list.inspect
-        result << "      s.add_dependency(%q<#{dep.name}>.freeze, #{version_reqs_param})"
-      end
-
-      result << '    end'
 
       result << "  else"
       dependencies.each do |dep|
@@ -2535,6 +2537,7 @@ class Gem::Specification < Gem::BasicSpecification
     builder << self
     ast = builder.tree
 
+    require 'stringio'
     io = StringIO.new
     io.set_encoding Encoding::UTF_8
 
@@ -2640,9 +2643,9 @@ class Gem::Specification < Gem::BasicSpecification
       case ivar
       when "date"
         # Force Date to go through the extra coerce logic in date=
-        self.date = val.untaint
+        self.date = val.tap(&Gem::UNTAINT)
       else
-        instance_variable_set "@#{ivar}", val.untaint
+        instance_variable_set "@#{ivar}", val.tap(&Gem::UNTAINT)
       end
     end
 

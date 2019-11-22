@@ -10,12 +10,17 @@ task :setup => ["bundler:checkout"] do
   gemspec = Gem::Specification.load(File.expand_path("../rubygems-update.gemspec", __FILE__))
 
   gemspec.dependencies.each do |dep|
-    sh "gem install '#{dep.name}:#{dep.requirement.to_s}' --conservative --no-document"
+    sh "gem install '#{dep.name}:#{dep.requirement.to_s}' --conservative --no-document --force"
   end
 end
 
+desc "Setup git hooks"
+task :git_hooks do
+  sh "git config core.hooksPath .githooks"
+end
+
 Rake::TestTask.new do |t|
-  t.ruby_opts = %w[--disable-gems -w]
+  t.ruby_opts = %w[-w]
   t.ruby_opts << '-rdevkit' if Gem.win_platform?
 
   t.libs << "test"
@@ -37,9 +42,9 @@ RDoc::Task.new :rdoc => 'docs', :clobber_rdoc => 'clobber_docs' do |doc|
 
   rdoc_files = Rake::FileList.new %w[lib bundler/lib]
   rdoc_files.add %w[History.txt LICENSE.txt MIT.txt CODE_OF_CONDUCT.md CONTRIBUTING.rdoc
-  MAINTAINERS.txt Manifest.txt POLICIES.rdoc README.md UPGRADING.rdoc bundler/CHANGELOG.md
-  bundler/CODE_OF_CONDUCT.md bundler/CONTRIBUTING.md bundler/LICENSE.md bundler/README.md
-  hide_lib_for_update/note.txt].map(&:freeze)
+                    MAINTAINERS.txt Manifest.txt POLICIES.rdoc README.md UPGRADING.rdoc bundler/CHANGELOG.md
+                    bundler/CODE_OF_CONDUCT.md bundler/CONTRIBUTING.md bundler/LICENSE.md bundler/README.md
+                    hide_lib_for_update/note.txt].map(&:freeze)
 
   doc.rdoc_files = rdoc_files
 
@@ -93,12 +98,17 @@ task :check_deprecations do
   end
 end
 
+desc "Install rubygems to local system"
+task :install => :package do
+  sh "gem install pkg/rubygems-update-#{v}.gem && update_rubygems"
+end
+
 desc "Release rubygems-#{v}"
 task :release => :prerelease do
   Rake::Task["package"].invoke
   sh "gem push pkg/rubygems-update-#{v}.gem"
+  Rake::Task["postrelease"].invoke
 end
-Rake::Task["release"].enhance(["postrelease"])
 
 Gem::PackageTask.new(spec) {}
 
@@ -125,13 +135,22 @@ end
 
 file "pkg/rubygems-#{v}.zip" => "pkg/rubygems-#{v}" do
   cd 'pkg' do
-    sh "zip -q -r rubygems-#{v}.zip rubygems-#{v}"
+    if Gem.win_platform?
+      sh "7z a rubygems-#{v}.zip rubygems-#{v}"
+    else
+      sh "zip -q -r rubygems-#{v}.zip rubygems-#{v}"
+    end
   end
 end
 
 file "pkg/rubygems-#{v}.tgz" => "pkg/rubygems-#{v}" do
   cd 'pkg' do
-    sh "tar -czf rubygems-#{v}.tgz rubygems-#{v}"
+    if Gem.win_platform? && RUBY_VERSION < '2.4'
+      sh "7z a -ttar  rubygems-#{v}.tar rubygems-#{v}"
+      sh "7z a -tgzip rubygems-#{v}.tgz rubygems-#{v}.tar"
+    else
+      sh "tar -czf rubygems-#{v}.tgz rubygems-#{v}"
+    end
   end
 end
 
@@ -357,17 +376,36 @@ end
 
 # Misc Tasks ---------------------------------------------------------
 
+module Rubygems
+  class ProjectFiles
+
+    def self.all
+      files = []
+      exclude = %r[\.git|\./bundler/(?!lib|man|exe|[^/]+\.md|bundler.gemspec)]ox
+      tracked_files = `git ls-files --recurse-submodules`.split("\n").map {|f| "./#{f}" }
+
+      tracked_files.each do |path|
+        next unless File.file?(path)
+        next if path =~ exclude
+        files << path[2..-1]
+      end
+
+      files
+    end
+
+  end
+end
+
 desc "Update the manifest to reflect what's on disk"
 task :update_manifest do
-  files = []
-  require 'find'
-  exclude = %r[/\/tmp\/|\/pkg\/|CVS|\.DS_Store|\/doc\/|\/coverage\/|\.svn|\.git|TAGS|extconf.h|\.bundle$|\.o$|\.log$/|\./bundler/(?!lib|man|exe|[^/]+\.md|bundler.gemspec)]ox
-  Find.find(".") do |path|
-    next unless File.file?(path)
-    next if path =~ exclude
-    files << path[2..-1]
+  File.open('Manifest.txt', 'w') {|f| f.puts(Rubygems::ProjectFiles.all.sort) }
+end
+
+desc "Check the manifest is up to date"
+task :check_manifest do
+  if File.read("Manifest.txt").split.sort != Rubygems::ProjectFiles.all.sort
+    abort "Manifest is out of date. Run `rake update_manifest` to sync it"
   end
-  File.open('Manifest.txt', 'w') {|f| f.puts(files.sort) }
 end
 
 namespace :bundler do

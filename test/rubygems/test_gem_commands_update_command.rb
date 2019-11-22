@@ -359,10 +359,10 @@ class TestGemCommandsUpdateCommand < Gem::TestCase
   end
 
   def test_execute_user_install
-    spec_fetcher do |fetcher|
-      fetcher.download 'a', 2
-      fetcher.spec 'a', 1
-    end
+    a = util_spec "a", 1
+    b = util_spec "b", 1
+    install_gem_user(a)
+    install_gem(b)
 
     @cmd.handle_options %w[--user-install]
 
@@ -373,7 +373,13 @@ class TestGemCommandsUpdateCommand < Gem::TestCase
     installer = @cmd.installer
     user_install = installer.instance_variable_get :@user_install
 
-    assert user_install, 'user_install must be set on the installer'
+    assert user_install, "user_install must be set on the installer"
+
+    out = @ui.output.split "\n"
+    assert_equal "Updating installed gems", out.shift
+    assert_equal "Updating a", out.shift
+    assert_equal "Gems updated: a", out.shift
+    assert_empty out
   end
 
   def test_fetch_remote_gems
@@ -384,7 +390,7 @@ class TestGemCommandsUpdateCommand < Gem::TestCase
 
     expected = [
       [Gem::NameTuple.new('a', v(2), Gem::Platform::RUBY),
-        Gem::Source.new(@gem_repo)],
+       Gem::Source.new(@gem_repo)],
     ]
 
     assert_equal expected, @cmd.fetch_remote_gems(specs['a-1'])
@@ -412,7 +418,7 @@ class TestGemCommandsUpdateCommand < Gem::TestCase
 
     expected = [
       [Gem::NameTuple.new('a', v(2), Gem::Platform::RUBY),
-        Gem::Source.new(@gem_repo)],
+       Gem::Source.new(@gem_repo)],
     ]
 
     assert_equal expected, @cmd.fetch_remote_gems(specs['a-1'])
@@ -429,9 +435,9 @@ class TestGemCommandsUpdateCommand < Gem::TestCase
 
     expected = [
       [Gem::NameTuple.new('a', v(2), Gem::Platform::RUBY),
-        Gem::Source.new(@gem_repo)],
+       Gem::Source.new(@gem_repo)],
       [Gem::NameTuple.new('a', v('3.a'), Gem::Platform::RUBY),
-        Gem::Source.new(@gem_repo)],
+       Gem::Source.new(@gem_repo)],
     ]
 
     assert_equal expected, @cmd.fetch_remote_gems(specs['a-1'])

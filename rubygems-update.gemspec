@@ -25,7 +25,7 @@ Gem::Specification.new do |s|
     "MIT.txt", "Manifest.txt", "README.md",
     "UPGRADING.md", "POLICIES.md", "CODE_OF_CONDUCT.md",
     "CONTRIBUTING.md", "bundler/CHANGELOG.md", "bundler/CODE_OF_CONDUCT.md",
-    "bundler/CONTRIBUTING.md", "bundler/LICENSE.md", "bundler/README.md",
+    "bundler/LICENSE.md", "bundler/README.md",
     "hide_lib_for_update/note.txt", *Dir["bundler/man/*.1"]
   ]
 
@@ -39,5 +39,5 @@ Gem::Specification.new do |s|
   s.add_development_dependency(%q<rake>, ["~> 12.0"])
   s.add_development_dependency(%q<minitest>, ["~> 5.0"])
   s.add_development_dependency(%q<simplecov>, ["~> 0"])
-  s.add_development_dependency(%q<rubocop>, ["~> 0.61.1"])
+  s.add_development_dependency(%q<rubocop>, ["~> 0.74.0"])
 end

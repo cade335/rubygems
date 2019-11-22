@@ -55,9 +55,9 @@ module Gem::Deprecate
         klass = self.kind_of? Module
         target = klass ? "#{self}." : "#{self.class}#"
         msg = [ "NOTE: #{target}#{name} is deprecated",
-          repl == :none ? " with no replacement" : "; use #{repl} instead",
-          ". It will be removed on or after %4d-%02d-01." % [year, month],
-          "\n#{target}#{name} called from #{Gem.location_of_caller.join(":")}",
+                repl == :none ? " with no replacement" : "; use #{repl} instead",
+                ". It will be removed on or after %4d-%02d-01." % [year, month],
+                "\n#{target}#{name} called from #{Gem.location_of_caller.join(":")}",
         ]
         warn "#{msg.join}." unless Gem::Deprecate.skip
         send old, *args, &block
@@ -65,6 +65,22 @@ module Gem::Deprecate
     end
   end
 
-  module_function :deprecate, :skip_during
+  # Deprecation method to deprecate Rubygems commands
+  def deprecate_command(year, month)
+    class_eval do
+      define_method "deprecated?" do
+        true
+      end
+
+      define_method "deprecation_warning" do
+        msg = [ "\nNOTE: #{self.command} command is deprecated",
+                ". It will be removed on or after %4d-%02d-01.\n" % [year, month],
+        ]
+
+        warn "#{msg.join}" unless Gem::Deprecate.skip
+      end
+    end
+  end
+  module_function :deprecate, :deprecate_command, :skip_during
 
 end

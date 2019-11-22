@@ -98,7 +98,7 @@ class Gem::Commands::SetupCommand < Gem::Command
   end
 
   def check_ruby_version
-    required_version = Gem::Requirement.new '>= 1.8.7'
+    required_version = Gem::Requirement.new '>= 2.3.0'
 
     unless required_version.satisfied_by? Gem.ruby_version
       alert_error "Expected Ruby version #{required_version}, is #{Gem.ruby_version}"
@@ -129,7 +129,7 @@ By default, this RubyGems will install gem as:
   end
 
   module MakeDirs
-    def mkdir_p(path, *opts)
+    def mkdir_p(path, **opts)
       super
       (@mkdirs ||= []) << path
     end
@@ -382,7 +382,7 @@ By default, this RubyGems will install gem as:
   end
 
   def install_default_bundler_gem(bin_dir)
-    specs_dir = Gem::Specification.default_specifications_dir
+    specs_dir = Gem.default_specifications_dir
     specs_dir = File.join(options[:destdir], specs_dir) unless Gem.win_platform?
     mkdir_p specs_dir, :mode => 0755
 

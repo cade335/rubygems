@@ -74,6 +74,12 @@ end
     end
   end
 
+  def assert_date(date)
+    assert_kind_of Time, date
+    assert_equal [0, 0, 0], [date.hour, date.min, date.sec]
+    assert_operator (Gem::Specification::TODAY..Time.now), :cover?, date
+  end
+
   def setup
     super
 
@@ -933,22 +939,24 @@ dependencies: []
     assert_equal File.join(@tempdir, 'a-2.gemspec'), spec.loaded_from
   end
 
-  def test_self_load_tainted
-    full_path = @a2.spec_file
-    write_file full_path do |io|
-      io.write @a2.to_ruby_for_cache
+  if RUBY_VERSION < '2.7'
+    def test_self_load_tainted
+      full_path = @a2.spec_file
+      write_file full_path do |io|
+        io.write @a2.to_ruby_for_cache
+      end
+
+      full_path.taint
+      loader = Thread.new { $SAFE = 1; Gem::Specification.load full_path }
+      spec = loader.value
+
+      @a2.files.clear
+
+      assert_equal @a2, spec
+
+    ensure
+      $SAFE = 0
     end
-
-    full_path.taint
-    loader = Thread.new { $SAFE = 1; Gem::Specification.load full_path }
-    spec = loader.value
-
-    @a2.files.clear
-
-    assert_equal @a2, spec
-
-  ensure
-    $SAFE = 0
   end
 
   def test_self_load_escape_curly
@@ -1035,7 +1043,7 @@ dependencies: []
     end
     assert_equal 'keyedlist', spec.name
     assert_equal '0.4.0', spec.version.to_s
-    assert_equal Gem::Specification::TODAY, spec.date
+    assert_kind_of Time, spec.date
     assert spec.required_ruby_version.satisfied_by?(Gem::Version.new('1'))
     assert_equal false, spec.has_unit_tests?
   end
@@ -1129,7 +1137,7 @@ dependencies: []
     Gem::Specification.class_variable_set(:@@stubs, nil)
 
     dir_standard_specs = File.join Gem.dir, 'specifications'
-    dir_default_specs = Gem::BasicSpecification.default_specifications_dir
+    dir_default_specs = Gem.default_specifications_dir
 
     # Create gemspecs in three locations used in stubs
     loaded_spec = Gem::Specification.new 'a', '3'
@@ -1149,17 +1157,16 @@ dependencies: []
     Gem::Specification.class_variable_set(:@@stubs, nil)
 
     dir_standard_specs = File.join Gem.dir, 'specifications'
-    dir_default_specs = Gem::BasicSpecification.default_specifications_dir
+    dir_default_specs = Gem.default_specifications_dir
 
     # Create gemspecs in three locations used in stubs
     loaded_spec = Gem::Specification.new 'a', '3'
     Gem.loaded_specs['a'] = loaded_spec
-    save_gemspec 'a', '2', dir_default_specs
-    save_gemspec 'a', '1', dir_standard_specs
+    save_gemspec('a-2', '2', dir_default_specs) { |s| s.name = 'a' }
+    save_gemspec('a-1', '1', dir_standard_specs) { |s| s.name = 'a' }
 
     full_names = ['a-3', 'a-2', 'a-1']
 
-    full_names = Gem::Specification.stubs_for('a').map { |s| s.full_name }
     assert_equal full_names, Gem::Specification.stubs_for('a').map { |s| s.full_name }
     assert_equal 1, Gem::Specification.class_variable_get(:@@stubs_by_name).length
 
@@ -1694,7 +1701,7 @@ dependencies: []
   end
 
   def test_date
-    assert_equal Gem::Specification::TODAY, @a1.date
+    assert_date @a1.date
   end
 
   def test_date_equals_date
@@ -2052,7 +2059,7 @@ dependencies: []
 
   def test_base_dir_default
     default_dir =
-      File.join Gem::Specification.default_specifications_dir, @a1.spec_name
+      File.join Gem.default_specifications_dir, @a1.spec_name
 
     @a1.instance_variable_set :@loaded_from, default_dir
 
@@ -2418,7 +2425,7 @@ Gem::Specification.new do |s|
   s.required_rubygems_version = Gem::Requirement.new(\"> 0\".freeze) if s.respond_to? :required_rubygems_version=
   s.require_paths = ["lib".freeze, "other".freeze]
   s.authors = ["A User".freeze]
-  s.date = "#{Gem::Specification::TODAY.strftime "%Y-%m-%d"}"
+  s.date = "#{@a2.date.strftime("%Y-%m-%d")}"
   s.description = "This is a test description".freeze
   s.email = "example@example.com".freeze
   s.files = ["lib/code.rb".freeze]
@@ -2428,12 +2435,10 @@ Gem::Specification.new do |s|
 
   if s.respond_to? :specification_version then
     s.specification_version = #{Gem::Specification::CURRENT_SPECIFICATION_VERSION}
+  end
 
-    if Gem::Version.new(Gem::VERSION) >= Gem::Version.new('1.2.0') then
-      s.add_runtime_dependency(%q<b>.freeze, [\"= 1\"])
-    else
-      s.add_dependency(%q<b>.freeze, [\"= 1\"])
-    end
+  if s.respond_to? :add_runtime_dependency then
+    s.add_runtime_dependency(%q<b>.freeze, [\"= 1\"])
   else
     s.add_dependency(%q<b>.freeze, [\"= 1\"])
   end
@@ -2445,6 +2450,35 @@ end
     same_spec = eval ruby_code
 
     assert_equal @a2, same_spec
+  end
+
+  def test_to_ruby_with_rsa_key
+    rsa_key = OpenSSL::PKey::RSA.new(2048)
+    @a2.signing_key = rsa_key
+    ruby_code = @a2.to_ruby
+
+    expected = <<-SPEC
+# -*- encoding: utf-8 -*-
+# stub: a 2 ruby lib
+
+Gem::Specification.new do |s|
+  s.name = "a".freeze
+  s.version = "2"
+
+  s.required_rubygems_version = Gem::Requirement.new(">= 0".freeze) if s.respond_to? :required_rubygems_version=
+  s.require_paths = ["lib".freeze]
+  s.authors = ["A User".freeze]
+  s.date = "#{@a2.date.strftime("%Y-%m-%d")}"
+  s.description = "This is a test description".freeze
+  s.email = "example@example.com".freeze
+  s.files = ["lib/code.rb".freeze]
+  s.homepage = "http://example.com".freeze
+  s.rubygems_version = "3.1.0.pre1".freeze
+  s.summary = "this is a summary".freeze
+end
+    SPEC
+
+    assert_equal expected, ruby_code
   end
 
   def test_to_ruby_for_cache
@@ -2467,7 +2501,7 @@ Gem::Specification.new do |s|
   s.required_rubygems_version = Gem::Requirement.new(\"> 0\".freeze) if s.respond_to? :required_rubygems_version=
   s.require_paths = ["lib".freeze]
   s.authors = ["A User".freeze]
-  s.date = "#{Gem::Specification::TODAY.strftime "%Y-%m-%d"}"
+  s.date = "#{@a2.date.strftime("%Y-%m-%d")}"
   s.description = "This is a test description".freeze
   s.email = "example@example.com".freeze
   s.homepage = "http://example.com".freeze
@@ -2478,12 +2512,10 @@ Gem::Specification.new do |s|
 
   if s.respond_to? :specification_version then
     s.specification_version = #{Gem::Specification::CURRENT_SPECIFICATION_VERSION}
+  end
 
-    if Gem::Version.new(Gem::VERSION) >= Gem::Version.new('1.2.0') then
-      s.add_runtime_dependency(%q<b>.freeze, [\"= 1\"])
-    else
-      s.add_dependency(%q<b>.freeze, [\"= 1\"])
-    end
+  if s.respond_to? :add_runtime_dependency then
+    s.add_runtime_dependency(%q<b>.freeze, [\"= 1\"])
   else
     s.add_dependency(%q<b>.freeze, [\"= 1\"])
   end
@@ -2524,7 +2556,7 @@ Gem::Specification.new do |s|
   s.required_rubygems_version = Gem::Requirement.new(\">= 0\".freeze) if s.respond_to? :required_rubygems_version=
   s.require_paths = ["lib".freeze]
   s.authors = ["A User".freeze]
-  s.date = "#{Gem::Specification::TODAY.strftime "%Y-%m-%d"}"
+  s.date = "#{@c1.date.strftime("%Y-%m-%d")}"
   s.description = "This is a test description".freeze
   s.email = "example@example.com".freeze
   s.executables = ["exec".freeze]
@@ -2539,16 +2571,12 @@ Gem::Specification.new do |s|
 
   if s.respond_to? :specification_version then
     s.specification_version = 4
+  end
 
-    if Gem::Version.new(Gem::VERSION) >= Gem::Version.new('1.2.0') then
-      s.add_runtime_dependency(%q<rake>.freeze, [\"> 0.4\"])
-      s.add_runtime_dependency(%q<jabber4r>.freeze, [\"> 0.0.0\"])
-      s.add_runtime_dependency(%q<pqa>.freeze, [\"> 0.4\", \"<= 0.6\"])
-    else
-      s.add_dependency(%q<rake>.freeze, [\"> 0.4\"])
-      s.add_dependency(%q<jabber4r>.freeze, [\"> 0.0.0\"])
-      s.add_dependency(%q<pqa>.freeze, [\"> 0.4\", \"<= 0.6\"])
-    end
+  if s.respond_to? :add_runtime_dependency then
+    s.add_runtime_dependency(%q<rake>.freeze, [\"> 0.4\"])
+    s.add_runtime_dependency(%q<jabber4r>.freeze, [\"> 0.0.0\"])
+    s.add_runtime_dependency(%q<pqa>.freeze, [\"> 0.4\", \"<= 0.6\"])
   else
     s.add_dependency(%q<rake>.freeze, [\"> 0.4\"])
     s.add_dependency(%q<jabber4r>.freeze, [\"> 0.0.0\"])
@@ -3600,6 +3628,11 @@ Did you mean 'Ruby'?
   end
 
   def test_metadata_specs
+    @m1 = quick_gem 'm', '1' do |s|
+      s.files = %w[lib/code.rb]
+      s.metadata = { 'one' => "two", 'two' => "three" }
+    end
+
     valid_ruby_spec = <<-EOF
 # -*- encoding: utf-8 -*-
 # stub: m 1 ruby lib
@@ -3612,7 +3645,7 @@ Gem::Specification.new do |s|
   s.metadata = { "one" => "two", "two" => "three" } if s.respond_to? :metadata=
   s.require_paths = ["lib".freeze]
   s.authors = ["A User".freeze]
-  s.date = "#{Gem::Specification::TODAY.strftime("%Y-%m-%d")}"
+  s.date = "#{@m1.date.strftime("%Y-%m-%d")}"
   s.description = "This is a test description".freeze
   s.email = "example@example.com".freeze
   s.files = ["lib/code.rb".freeze]
@@ -3621,11 +3654,6 @@ Gem::Specification.new do |s|
   s.summary = "this is a summary".freeze
 end
     EOF
-
-    @m1 = quick_gem 'm', '1' do |s|
-      s.files = %w[lib/code.rb]
-      s.metadata = { 'one' => "two", 'two' => "three" }
-    end
 
     assert_equal @m1.to_ruby, valid_ruby_spec
   end

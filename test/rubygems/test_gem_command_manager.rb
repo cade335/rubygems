@@ -4,6 +4,8 @@ require 'rubygems/command_manager'
 
 class TestGemCommandManager < Gem::TestCase
 
+  PROJECT_DIR = File.expand_path('../../..', __FILE__).tap(&Gem::UNTAINT)
+
   def setup
     super
 
@@ -58,7 +60,7 @@ class TestGemCommandManager < Gem::TestCase
 
   def test_run_interrupt
     old_load_path = $:.dup
-    $: << File.expand_path("test/rubygems", @@project_dir)
+    $: << File.expand_path("test/rubygems", PROJECT_DIR)
     Gem.load_env_plugins
 
     @command_manager.register_command :interrupt
@@ -77,7 +79,7 @@ class TestGemCommandManager < Gem::TestCase
 
   def test_run_crash_command
     old_load_path = $:.dup
-    $: << File.expand_path("test/rubygems", @@project_dir)
+    $: << File.expand_path("test/rubygems", PROJECT_DIR)
 
     @command_manager.register_command :crash
     use_ui @ui do
@@ -127,7 +129,7 @@ class TestGemCommandManager < Gem::TestCase
       check_options = nil
       @command_manager.process_args %w[
         install --force --local --document=ri,rdoc --install-dir .
-                --version 3.0 --no-wrapper --bindir .
+        --version 3.0 --no-wrapper --bindir .
       ]
       assert_equal %w[rdoc ri], check_options[:document].sort
       assert_equal true, check_options[:force]
@@ -264,6 +266,31 @@ class TestGemCommandManager < Gem::TestCase
     assert_includes check_options[:document], 'ri'
     assert_equal true, check_options[:force]
     assert_equal Dir.pwd, check_options[:install_dir]
+  end
+
+  def test_deprecated_command
+    require 'rubygems/command'
+    foo_command = Class.new(Gem::Command) do
+      extend Gem::Deprecate
+
+      deprecate_command(2099, 4)
+
+      def execute
+        puts "pew pew!"
+      end
+    end
+
+    Gem::Commands.send(:const_set, :FooCommand, foo_command)
+    @command_manager.register_command(:foo, foo_command.new("foo"))
+
+    out, err = capture_io do
+      @command_manager.process_args(%w[foo])
+    end
+
+    assert_equal "pew pew!\n", out
+    assert_match(/NOTE: foo command is deprecated. It will be removed on or after 2099-04-01.\n/, err)
+  ensure
+    Gem::Commands.send(:remove_const, :FooCommand)
   end
 
 end

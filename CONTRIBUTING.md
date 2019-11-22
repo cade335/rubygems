@@ -33,6 +33,8 @@ here: http://guides.rubygems.org/contributing/
     $ rake setup
     $ rake test
 
+> Optional you can configure git hooks with: rake git_hooks
+
 To run commands like `gem install` from the repo:
 
     $ ruby -Ilib bin/gem install
@@ -146,3 +148,14 @@ issues have a blue `category: *` label.
 If an issue or pull request pertains to only one platform, then it should have
 an appropriate purple `platform: *` label. Current platform labels:
 **windows**, **java**, **osx**, **linux**
+
+### Git
+
+Please sign your commits. Although not required in order for you to contribute,
+it does ensures that any code submitted by you wasn't altered while you were
+transferring it, and proves that it was you who submitted it and not someone
+else.
+
+Please see https://git-scm.com/book/en/v2/Git-Tools-Signing-Your-Work or
+https://help.github.com/en/articles/signing-commits for details on how to
+to generate a signature and automatically sign your commits.

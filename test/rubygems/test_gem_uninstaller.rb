@@ -221,13 +221,13 @@ class TestGemUninstaller < Gem::InstallerTestCase
 
     uninstaller = Gem::Uninstaller.new spec.name, :executables => true
 
-    e = assert_raises Gem::InstallError do
+    use_ui @ui do
       uninstaller.uninstall
     end
 
-    assert_equal 'gem "default" cannot be uninstalled ' +
-                 'because it is a default gem',
-                 e.message
+    lines = @ui.output.split("\n")
+
+    assert_equal 'Gem default-2 cannot be uninstalled because it is a default gem', lines.shift
   end
 
   def test_uninstall_default_gem_with_same_version
@@ -521,6 +521,35 @@ create_makefile '#{@spec.name}'
     lines.shift
 
     assert_match %r!r-1 depends on q \(= 1, development\)!, lines.shift
+    assert_match %r!Successfully uninstalled q-1!, lines.last
+  end
+
+  def test_uninstall_prompt_only_lists_the_dependents_that_prevented_uninstallation
+    quick_gem 'r', '1' do |s|
+      s.add_development_dependency 'q', '= 1'
+    end
+
+    quick_gem 's', '1' do |s|
+      s.add_dependency 'q', '= 1'
+    end
+
+    quick_gem 'q', '1'
+
+    un = Gem::Uninstaller.new('q', :check_dev => false)
+    ui = Gem::MockGemUi.new("y\n")
+
+    use_ui ui do
+      un.uninstall
+    end
+
+    lines = ui.output.split("\n")
+    lines.shift
+
+    assert_match %r!You have requested to uninstall the gem:!, lines.shift
+    lines.shift
+    lines.shift
+
+    assert_match %r!s-1 depends on q \(= 1\)!, lines.shift
     assert_match %r!Successfully uninstalled q-1!, lines.last
   end
 
